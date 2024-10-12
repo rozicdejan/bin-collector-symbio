@@ -55,7 +55,12 @@ func fetchData() {
 	caps := selenium.Capabilities{
 		"browserName": "chrome",
 		"goog:chromeOptions": map[string]interface{}{
-			"args": []string{"--headless", "--no-sandbox", "--disable-dev-shm-usage"},
+			"args": []string{
+				"--headless",
+				"--no-sandbox",
+				"--disable-dev-shm-usage",
+				"--disable-gpu",
+			},
 		},
 	}
 	wd, err := selenium.NewRemote(caps, fmt.Sprintf(chromeDriverURL, port))
