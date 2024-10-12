@@ -26,15 +26,55 @@ var (
 
 // Get the path to ChromeDriver based on the operating system
 func getChromeDriverPath() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "./chromedriver-win64/chromedriver.exe"
-	} else if runtime.GOOS == "linux" {
+	case "linux":
 		return "./chromedriver-linux64/chromedriver"
+	default:
+		return ""
 	}
-	return ""
 }
 
-// Fetch data using Selenium
+// retry tries the given function up to maxRetries with a delay between retries
+func retry(attempts int, delay time.Duration, fn func() error) error {
+	for i := 0; i < attempts; i++ {
+		if err := fn(); err != nil {
+			log.Printf("Attempt %d failed: %v", i+1, err)
+			time.Sleep(delay)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("after %d attempts, the operation failed", attempts)
+}
+
+// Waits for an element with a timeout
+func waitForElement(wd selenium.WebDriver, by, value string, timeout time.Duration) (selenium.WebElement, error) {
+	for end := time.Now().Add(timeout); time.Now().Before(end); time.Sleep(500 * time.Millisecond) {
+		el, err := wd.FindElement(by, value)
+		if err == nil {
+			return el, nil
+		}
+	}
+	return nil, fmt.Errorf("element not found: %s %s", by, value)
+}
+
+// waitForElementWithRetry retries the fetching of an element with retries
+func waitForElementWithRetry(wd selenium.WebDriver, by, value string, timeout time.Duration, attempts int, delay time.Duration) (selenium.WebElement, error) {
+	var el selenium.WebElement
+	err := retry(attempts, delay, func() error {
+		var err error
+		el, err = waitForElement(wd, by, value, timeout)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find element %s %s after retries: %v", by, value, err)
+	}
+	return el, nil
+}
+
+// Fetch data using Selenium with retry logic for stability
 func fetchData() {
 	seleniumPath := getChromeDriverPath()
 	if seleniumPath == "" {
@@ -43,9 +83,14 @@ func fetchData() {
 	const (
 		port            = 9515
 		chromeDriverURL = "http://localhost:%d/wd/hub"
+		maxRetries      = 3
+		retryDelay      = 2 * time.Second
 	)
 
-	opts := []selenium.ServiceOption{}
+	opts := []selenium.ServiceOption{
+		// Configure options here if needed
+	}
+
 	service, err := selenium.NewChromeDriverService(seleniumPath, port, opts...)
 	if err != nil {
 		log.Fatalf("Error starting the ChromeDriver server: %v", err)
@@ -63,56 +108,78 @@ func fetchData() {
 			},
 		},
 	}
+
 	wd, err := selenium.NewRemote(caps, fmt.Sprintf(chromeDriverURL, port))
 	if err != nil {
 		log.Fatalf("Error connecting to WebDriver: %v", err)
 	}
 	defer wd.Quit()
 
-	err = wd.Get("https://www.simbio.si/sl/moj-dan-odvoza-odpadkov")
+	// Navigate to page
+	err = retry(maxRetries, retryDelay, func() error {
+		return wd.Get("https://www.simbio.si/sl/moj-dan-odvoza-odpadkov")
+	})
 	if err != nil {
-		log.Fatalf("Failed to load page: %v", err)
+		log.Fatalf("Failed to load page after retries: %v", err)
 	}
-	time.Sleep(3 * time.Second)
 
-	addressInput, err := wd.FindElement(selenium.ByCSSSelector, ".ui-comboBox-input")
+	// Retry finding and interacting with the address input
+	addressInput, err := waitForElementWithRetry(wd, selenium.ByCSSSelector, ".ui-comboBox-input", 10*time.Second, maxRetries, retryDelay)
 	if err != nil {
-		log.Fatalf("Could not find address input: %v", err)
+		log.Fatalf("Error finding address input after retries: %v", err)
 	}
-	err = addressInput.SendKeys("ZAČRET 69,")
+
+	err = retry(maxRetries, retryDelay, func() error {
+		return addressInput.SendKeys("ZAČRET 69,")
+	})
 	if err != nil {
-		log.Fatalf("Error typing address: %v", err)
+		log.Fatalf("Error typing address after retries: %v", err)
 	}
-	time.Sleep(2 * time.Second)
 
-	addressSuggestion, err := wd.FindElement(selenium.ByXPATH, "//li[contains(text(), 'ZAČRET 69 , LJUBEČNA')]")
+	// Retry finding and clicking the address suggestion
+	addressSuggestion, err := waitForElementWithRetry(wd, selenium.ByXPATH, "//li[contains(text(), 'ZAČRET 69 , LJUBEČNA')]", 5*time.Second, maxRetries, retryDelay)
 	if err != nil {
-		log.Fatalf("Error finding address suggestion: %v", err)
+		log.Fatalf("Error finding address suggestion after retries: %v", err)
 	}
-	err = addressSuggestion.Click()
+
+	err = retry(maxRetries, retryDelay, func() error {
+		return addressSuggestion.Click()
+	})
 	if err != nil {
-		log.Fatalf("Error clicking address suggestion: %v", err)
+		log.Fatalf("Error clicking address suggestion after retries: %v", err)
 	}
-	time.Sleep(5 * time.Second)
 
-	// Scrape data
-	nameElement, _ := wd.FindElement(selenium.ByCSSSelector, "div.next_mko > div.label")
-	dateElement, _ := wd.FindElement(selenium.ByCSSSelector, "div.next_mko > div.text")
-	wasteData.MKOName, _ = nameElement.Text()
-	wasteData.MKODate, _ = dateElement.Text()
+	// Helper function to fetch data
+	scrapeWasteData := func(labelSelector, dateSelector string) (string, string) {
+		labelEl, _ := waitForElementWithRetry(wd, selenium.ByCSSSelector, labelSelector, 5*time.Second, maxRetries, retryDelay)
+		dateEl, _ := waitForElementWithRetry(wd, selenium.ByCSSSelector, dateSelector, 5*time.Second, maxRetries, retryDelay)
+		label, _ := labelEl.Text()
+		date, _ := dateEl.Text()
+		return label, date
+	}
 
-	nameElement, _ = wd.FindElement(selenium.ByCSSSelector, "div.next_emb > div.label")
-	dateElement, _ = wd.FindElement(selenium.ByCSSSelector, "div.next_emb > div.text")
-	wasteData.EmbName, _ = nameElement.Text()
-	wasteData.EmbDate, _ = dateElement.Text()
-
-	nameElement, _ = wd.FindElement(selenium.ByCSSSelector, "div.next_bio > div.label")
-	dateElement, _ = wd.FindElement(selenium.ByCSSSelector, "div.next_bio > div.text")
-	wasteData.BioName, _ = nameElement.Text()
-	wasteData.BioDate, _ = dateElement.Text()
+	// Scrape all waste categories
+	mkoName, mkoDate := scrapeWasteData("div.next_mko > div.label", "div.next_mko > div.text")
+	embName, embDate := scrapeWasteData("div.next_emb > div.label", "div.next_emb > div.text")
+	bioName, bioDate := scrapeWasteData("div.next_bio > div.label", "div.next_bio > div.text")
 
 	mutex.Lock()
-	defer mutex.Unlock()
+	wasteData = struct {
+		MKOName string
+		MKODate string
+		EmbName string
+		EmbDate string
+		BioName string
+		BioDate string
+	}{
+		MKOName: mkoName,
+		MKODate: mkoDate,
+		EmbName: embName,
+		EmbDate: embDate,
+		BioName: bioName,
+		BioDate: bioDate,
+	}
+	mutex.Unlock()
 }
 
 // Serve dynamic HTML
@@ -128,7 +195,7 @@ func dataHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, wasteData)
 }
 
-// Updates data every 15 seconds
+// Updates data every 15 minutes
 func dataUpdater() {
 	for {
 		fetchData()
