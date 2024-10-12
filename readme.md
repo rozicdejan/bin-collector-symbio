@@ -14,11 +14,12 @@ rm chromedriver_linux64.zip
 
  Set Up Execution Permissions
 chmod +x bin-collector-symbio-linux
-
+ Set Up Execution Permissions
+chmod +x ./chromedriver-linux64/chromedriver
 . Run the Application
 ./bin-collector-symbio-linux
 
-chmod +x ./chromedriver-linux64/chromedriver
+
 
 o run bin-collector in Linux, follow these steps:
 
@@ -50,6 +51,6 @@ Run the Docker container:
 
 bash
 Copy code
-docker run -p 8080:8080 bin-collector
+docker run -d -p 8080:8080 bin-collector
 This will start your app inside the container and expose port 8080 for access across your LAN or localhost.
 
