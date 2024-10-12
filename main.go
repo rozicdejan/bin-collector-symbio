@@ -52,7 +52,12 @@ func fetchData() {
 	}
 	defer service.Stop()
 
-	caps := selenium.Capabilities{"browserName": "chrome"}
+	caps := selenium.Capabilities{
+		"browserName": "chrome",
+		"goog:chromeOptions": map[string]interface{}{
+			"args": []string{"--headless", "--no-sandbox", "--disable-dev-shm-usage"},
+		},
+	}
 	wd, err := selenium.NewRemote(caps, fmt.Sprintf(chromeDriverURL, port))
 	if err != nil {
 		log.Fatalf("Error connecting to WebDriver: %v", err)
