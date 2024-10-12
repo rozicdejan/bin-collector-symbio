@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -23,10 +24,23 @@ var (
 	mutex = &sync.Mutex{}
 )
 
+// Get the path to ChromeDriver based on the operating system
+func getChromeDriverPath() string {
+	if runtime.GOOS == "windows" {
+		return "./chromedriver-win64/chromedriver.exe"
+	} else if runtime.GOOS == "linux" {
+		return "./chromedriver-linux64/chromedriver"
+	}
+	return ""
+}
+
 // Fetch data using Selenium
 func fetchData() {
+	seleniumPath := getChromeDriverPath()
+	if seleniumPath == "" {
+		log.Fatalf("Unsupported operating system: %v", runtime.GOOS)
+	}
 	const (
-		seleniumPath    = ".\\chromedriver-win64\\chromedriver.exe"
 		port            = 9515
 		chromeDriverURL = "http://localhost:%d/wd/hub"
 	)
